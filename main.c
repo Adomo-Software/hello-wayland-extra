@@ -7,12 +7,14 @@
 #include <wayland-client.h>
 #include <wayland-client-protocol.h>
 #include <linux/input-event-codes.h>
+#include <cairo/cairo.h>
+#include <wchar.h>
 
 #include "shm.h"
 #include "xdg-shell-client-protocol.h"
 
-static const int width = 128;
-static const int height = 128;
+static const int width = 1000;
+static const int height = 400;
 
 static bool configured = false;
 static bool running = true;
@@ -130,6 +132,15 @@ static const struct wl_registry_listener registry_listener = {
 	.global_remove = handle_global_remove,
 };
 
+static void set_source_u32(cairo_t *cairo, uint32_t color) {
+  cairo_set_source_rgba(cairo,
+												(color >> (0 * 8) & 0xFF) / 255.0,
+                        (color >> (1 * 8) & 0xFF) / 255.0,
+                        (color >> (2 * 8) & 0xFF) / 255.0,
+                        (color >> (3 * 8) & 0xFF) / 255.0);
+}
+
+
 static struct wl_buffer *create_buffer(void) {
 	int stride = width * 4;
 	int size = stride * height;
@@ -159,7 +170,32 @@ static struct wl_buffer *create_buffer(void) {
 	// need to keep file descriptor opened
 	close(fd);
 
-	memset(shm_data, 255, size);
+	/*                        A.R.G.B. */
+	uint32_t foreground = L'\xFF000000';
+	uint32_t background = L'\xFFFFFFFF';
+	const char* text = "Hi, mom";
+	double font_size = 200;
+	double font_scale = 1.0;
+
+	wmemset(shm_data, background, width * height);
+	
+	// Text rendering stuff
+	const cairo_format_t cairo_fmt = CAIRO_FORMAT_ARGB32;
+
+	cairo_surface_t* cairo_surface = cairo_image_surface_create_for_data(shm_data, cairo_fmt, width, height, stride);
+	cairo_t *cairo = cairo_create(cairo_surface);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+
+	set_source_u32(cairo, foreground);
+	cairo_select_font_face(cairo, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+
+	cairo_set_font_size(cairo, font_size * font_scale);
+	cairo_text_extents_t extents;
+	cairo_text_extents(cairo, text, &extents);
+  cairo_move_to(cairo,
+								((width / 2) - (extents.width / 2 + extents.x_bearing)) * font_scale,
+								((height / 2) - (extents.height / 2 + extents.y_bearing)) * font_scale);
+  cairo_show_text(cairo, text);
 
 	return buffer;
 }
