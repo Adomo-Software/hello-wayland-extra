@@ -1,8 +1,12 @@
-# hello-wayland
+# hello-wayland-extra
 
-A hello world Wayland client, 2018 edition.
+Purpose of this repo is to implement some common client features, in the most mininal way.
 
-This is a simple client showing a picture. It uses the [xdg-shell] protocol.
+Features like:
+
+- text rendering (using cairo)
+- server side decorations, (using xdg-decoration-unstable protocol)
+- (TODO) client side decorations
 
 ## Dependencies
 
