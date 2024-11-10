@@ -12,9 +12,12 @@
 
 #include "shm.h"
 #include "xdg-shell-client-protocol.h"
+#ifdef USE_XDG_DECORATION
+#include "xdg-decoration-unstable-v1-client-protocol.h"
+#endif
 
-static const int width = 1000;
-static const int height = 400;
+static int32_t width = 1000;
+static int32_t height = 400;
 
 static bool configured = false;
 static bool running = true;
@@ -26,10 +29,18 @@ static struct xdg_wm_base *xdg_wm_base = NULL;
 static void *shm_data = NULL;
 static struct wl_surface *surface = NULL;
 static struct xdg_toplevel *xdg_toplevel = NULL;
+static struct wl_buffer *buffer = NULL;
+#ifdef USE_XDG_DECORATION
+struct zxdg_decoration_manager_v1 *decoration_manager;
+#endif
 
 static void noop() {
 	// This space intentionally left blank
 }
+
+static void xdg_toplevel_handle_configure(void *data,
+		struct xdg_toplevel *xdg_toplevel, int32_t new_width, int32_t new_height,
+																					struct wl_array *states);
 
 static void xdg_wm_base_handle_ping(void *data,
 		struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
@@ -61,6 +72,7 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 	.configure = xdg_surface_handle_configure,
 };
 
+
 static void xdg_toplevel_handle_close(void *data,
 		struct xdg_toplevel *xdg_toplevel) {
 	// Stop running if the user requests to close the toplevel
@@ -68,20 +80,18 @@ static void xdg_toplevel_handle_close(void *data,
 }
 
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
-	.configure = noop,
+	.configure = xdg_toplevel_handle_configure,
 	.close = xdg_toplevel_handle_close,
 };
 
 static void pointer_handle_button(void *data, struct wl_pointer *pointer,
 		uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
 	struct wl_seat *seat = data;
-
-	// If the user presses the left pointer button, start an interactive move
-	// of the toplevel
 	if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
 		xdg_toplevel_move(xdg_toplevel, seat, serial);
 	}
 }
+
 
 static const struct wl_pointer_listener pointer_listener = {
 	.enter = noop,
@@ -120,6 +130,11 @@ static void handle_global(void *data, struct wl_registry *registry,
 		xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
 		xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, NULL);
 	}
+#ifdef USE_XDG_DECORATION
+	else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
+		decoration_manager = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
+	}
+#endif
 }
 
 static void handle_global_remove(void *data, struct wl_registry *registry,
@@ -200,6 +215,21 @@ static struct wl_buffer *create_buffer(void) {
 	return buffer;
 }
 
+static void xdg_toplevel_handle_configure(void *data,
+		struct xdg_toplevel *xdg_toplevel, int32_t new_width, int32_t new_height,
+		struct wl_array *states) {
+	if (new_width > 0 && new_height > 0) {
+		width = new_width;
+		height = new_height;
+		if (buffer) {
+			wl_buffer_destroy(buffer);
+			buffer = create_buffer();
+			wl_surface_attach(surface, buffer, 0, 0);
+			wl_surface_commit(surface);
+		}
+	}
+}
+
 int main(int argc, char *argv[]) {
 	// Connect to the Wayland compositor
 	struct wl_display *display = wl_display_connect(NULL);
@@ -227,17 +257,25 @@ int main(int argc, char *argv[]) {
 		xdg_wm_base_get_xdg_surface(xdg_wm_base, surface);
 	xdg_toplevel = xdg_surface_get_toplevel(xdg_surface);
 
+#ifdef USE_XDG_DECORATION
+	if (decoration_manager) {
+		struct zxdg_toplevel_decoration_v1 *decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, xdg_toplevel);
+		zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+	}
+#endif
+		
 	xdg_surface_add_listener(xdg_surface, &xdg_surface_listener, NULL);
 	xdg_toplevel_add_listener(xdg_toplevel, &xdg_toplevel_listener, NULL);
 
 	// Perform the initial commit and wait for the first configure event
 	wl_surface_commit(surface);
+
 	while (wl_display_dispatch(display) != -1 && !configured) {
 		// This space intentionally left blank
 	}
 
 	// Create a wl_buffer, attach it to the surface and commit the surface
-	struct wl_buffer *buffer = create_buffer();
+	buffer = create_buffer();
 	if (buffer == NULL) {
 		return EXIT_FAILURE;
 	}
